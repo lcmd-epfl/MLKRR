@@ -30,56 +30,95 @@ class MLKRR:
     tol : float, optional (default=None)
       Convergence tolerance for the optimization.
 
-    max_iter : int, optional (default=1000)
-      Cap on number of conjugate gradient iterations.
+    max_iter_per_shuffle : int, optional (default=1000)
+      Cap on number of conjugate gradient iterations for each shuffling of the data.
 
     verbose : bool, optional (default=False)
       Whether to print progress messages or not.
 
+    diag : bool, optional (default=False)
+      Allows to force the matrix A to be diagonal.
+
+    smothness : float, optional (default=0)
+      Induces a constraint to enforce smoothness in the matrix A.
+
+    krr_regularization : float, optional (default=0)
+      Regularization on the estimator of KRR.
+
+    sigma : float, optional (default=1)
+      Parameter of the gaussian kernel, determines its (initial) width.
+
+    metod : string, optional (default='L-BFGS-B')
+      Optimization method used to minimize the loss function.
+
+    test_data: [X, y], optional (default=None)
+      Allows to track the accuracy of the KRR on a different test set.
+
+    size_alpha: float, optional (default=0.5)
+      Size of the partition used to train the KRR.
+
+    size_A: float, optional (default=0.5)
+      Size of the partition used to fit the matrix A.
+
+    shuffle_iterations: int, optional (default=1)
+      Number of reshufflings of the data between alpha and A sets.
+
     Attributes
     ----------
-    n_iter_ : `int`
-      The number of iterations the solver has run.
+    max_iter_per_shuffle : `int`
+      The number of iterations the solver has run for each shuffling of the data.
 
     components_ : `numpy.ndarray`, shape=(n_components, n_features)
       The learned linear transformation ``A``.
 
+    train_rmse : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
+      Evolution of the root mean squared error of the KRR on the train set.
+
+    test_rmse : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
+      Evolution of the root mean squared error of the KRR on the test set.
+
+    train_mae : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
+      Evolution of the mean absolute error of the KRR on the train set.
+
+    test_mae : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
+      Evolution of the mean absolute error of the KRR on the test set.
+
     Examples
     --------
 
-    >>> from metric_learn import MLKR
+    >>> import mlkrr
     >>> from sklearn.datasets import load_iris
     >>> iris_data = load_iris()
     >>> X = iris_data['data']
     >>> Y = iris_data['target']
-    >>> mlkr = MLKR()
+    >>> mlkr = mlkrr.MLKRR()
     >>> mlkr.fit(X, Y)
 
     References
     ----------
-    .. [1] 
+    .. [1] Tailoring molecular similarity with Metric Learning for Kernel Ridge Regression
+            Machine Learning: Science and Technology
     """
 
     def __init__(self, init='identity', tol=None, max_iter_per_shuffle=100,
-                 verbose=False, l2_constraint=0, diag=False, vstep=5, smoothness=0,
-                 krr_regularization=0, sigma=1, method='L-BFGS-B', split_seed=0,
-                 test_data=None, size1=0.5, size2=0.5, shuffle_iterations=1):
+                 verbose=False, diag=False, smoothness=0, 
+                 krr_regularization=0, sigma=1,
+                 method='L-BFGS-B', test_data=None, 
+                 size_alpha=0.5, size_A=0.5,
+                 shuffle_iterations=1):
 
         self.smoothness = smoothness
-        self.split_seed = split_seed
         self.test_data = test_data
-        self.l2_constraint = l2_constraint
         self.diag = diag
         self.init = init
         self.tol = tol
         self.max_iter_per_shuffle = max_iter_per_shuffle
         self.verbose = verbose
-        self.vstep = vstep
         self.krr_regularization = krr_regularization
         self.sigma = sigma
         self.method = method
-        self.size1 = size1
-        self.size2 = size2
+        self.size_alpha = size_alpha
+        self.size_A = size_A
         self.shuffle_iterations = shuffle_iterations
 
     def fit(self, X, y):
@@ -118,7 +157,7 @@ class MLKRR:
         for i in range(self.shuffle_iterations):
             self.shuffle_n_ = i
 
-            self.shuffle_index = i + self.split_seed
+            self.shuffle_index = i
             print('====================================')
             print('Starting shuffle iteration: ', i)
             print('====================================')
@@ -161,8 +200,8 @@ class MLKRR:
         self.A = A
 
         indices_X1, indices_X2 = sk.model_selection.train_test_split(
-            np.arange(len(X)), train_size=self.size1,
-            test_size=self.size2, random_state=self.shuffle_index)
+            np.arange(len(X)), train_size=self.size_alpha,
+            test_size=self.size_A, random_state=self.shuffle_index)
 
         X1 = X[indices_X1]
         X2 = X[indices_X2]
