@@ -1,16 +1,17 @@
 """
 Metric Learning for Kernel Regression (MLKR)
 """
-import time
 import sys
+import time
 import warnings
+
 import numpy as np
+import sklearn as sk
 from scipy.optimize import minimize
+from scipy.special import logsumexp
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.metrics import pairwise_distances
-from scipy.special import logsumexp
 
-import sklearn as sk
 EPS = np.finfo(float).eps
 
 
@@ -100,12 +101,22 @@ class MLKRR:
             Machine Learning: Science and Technology
     """
 
-    def __init__(self, init='identity', tol=None, max_iter_per_shuffle=100,
-                 verbose=False, diag=False, smoothness=0, 
-                 krr_regularization=0, sigma=1,
-                 method='L-BFGS-B', test_data=None, 
-                 size_alpha=0.5, size_A=0.5,
-                 shuffle_iterations=1):
+    def __init__(
+        self,
+        init="identity",
+        tol=None,
+        max_iter_per_shuffle=100,
+        verbose=False,
+        diag=False,
+        smoothness=0,
+        krr_regularization=0,
+        sigma=1,
+        method="L-BFGS-B",
+        test_data=None,
+        size_alpha=0.5,
+        size_A=0.5,
+        shuffle_iterations=1,
+    ):
 
         self.smoothness = smoothness
         self.test_data = test_data
@@ -133,12 +144,11 @@ class MLKRR:
         n, d = X.shape
 
         if self.smoothness != 0:
-            self.tmat = np.diag(np.ones(d), k=0) - \
-                np.diag(np.ones(d - 1), k=-1)
+            self.tmat = np.diag(np.ones(d), k=0) - np.diag(np.ones(d - 1), k=-1)
             self.tmat = self.tmat[:, :-1]
             self.ttpmat = self.tmat @ self.tmat.T
 
-        if self.init == 'identity':
+        if self.init == "identity":
             self.init = np.diag(np.ones(shape=[X.shape[1]]))
 
         self.A = self.init.copy()
@@ -158,12 +168,18 @@ class MLKRR:
             self.shuffle_n_ = i
 
             self.shuffle_index = i
-            print('====================================')
-            print('Starting shuffle iteration: ', i)
-            print('====================================')
-            res = minimize(self._loss, self.A.ravel(), (X, y), method=self.method,
-                           jac=True, tol=self.tol,
-                           options=dict(maxiter=self.max_iter_per_shuffle))
+            print("====================================")
+            print("Starting shuffle iteration: ", i)
+            print("====================================")
+            res = minimize(
+                self._loss,
+                self.A.ravel(),
+                (X, y),
+                method=self.method,
+                jac=True,
+                tol=self.tol,
+                options=dict(maxiter=self.max_iter_per_shuffle),
+            )
 
             self.components_ = res.x.reshape(self.A.shape)
             self.A = self.components_
@@ -175,24 +191,26 @@ class MLKRR:
             if not res.success:
                 cls_name = self.__class__.__name__
                 warnings.warn(
-                    '[{}] MLKR did not converge: {}'.format(
-                        cls_name, res.message), ConvergenceWarning)
-            print('[{}] Training took {:8.2f}s.'.format(cls_name, train_time))
+                    "[{}] MLKR did not converge: {}".format(cls_name, res.message),
+                    ConvergenceWarning,
+                )
+            print("[{}] Training took {:8.2f}s.".format(cls_name, train_time))
 
         return self
 
     def _loss(self, flatA, X, y):
 
         if self.n_iter_ == 0 and self.verbose:
-            header_fields = ['Iteration', 'Objective Value', 'Time(s)']
-            header_fmt = '{:>10} {:>20} {:>10}'
+            header_fields = ["Iteration", "Objective Value", "Time(s)"]
+            header_fmt = "{:>10} {:>20} {:>10}"
             header = header_fmt.format(*header_fields)
             cls_name = self.__class__.__name__
-            print('[{cls}]'.format(cls=cls_name))
-            print('[{cls}] {header}\n[{cls}] {sep}'.format(
-                cls=cls_name,
-                header=header,
-                sep='-' * len(header)))
+            print("[{cls}]".format(cls=cls_name))
+            print(
+                "[{cls}] {header}\n[{cls}] {sep}".format(
+                    cls=cls_name, header=header, sep="-" * len(header)
+                )
+            )
 
         start_time = time.time()
 
@@ -200,8 +218,11 @@ class MLKRR:
         self.A = A
 
         indices_X1, indices_X2 = sk.model_selection.train_test_split(
-            np.arange(len(X)), train_size=self.size_alpha,
-            test_size=self.size_A, random_state=self.shuffle_index)
+            np.arange(len(X)),
+            train_size=self.size_alpha,
+            test_size=self.size_A,
+            random_state=self.shuffle_index,
+        )
 
         X1 = X[indices_X1]
         X2 = X[indices_X2]
@@ -215,12 +236,11 @@ class MLKRR:
 
         sigma = self.sigma
         kernel_constant = 1 / (1 * np.sqrt(2 * np.pi) * sigma)
-        exponent_constant = 1 / (1 * sigma ** 2)
+        exponent_constant = 1 / (1 * sigma**2)
 
         dist1 = pairwise_distances(X1e, squared=True, n_jobs=-1)
 
-        kernel1 = kernel_constant * np.exp(
-            - dist1 * exponent_constant)
+        kernel1 = kernel_constant * np.exp(-dist1 * exponent_constant)
 
         n1 = len(X1)
         J = np.linalg.inv(kernel1 + self.krr_regularization * np.eye(n1))
@@ -231,32 +251,28 @@ class MLKRR:
 
         # yhat = kernel1.dot(alphas) + intercept
 
-        dist2 = pairwise_distances(X2e, X1e,
-                                   squared=True, n_jobs=-1)
+        dist2 = pairwise_distances(X2e, X1e, squared=True, n_jobs=-1)
 
-        kernel2 = kernel_constant * np.exp(
-            - dist2 * exponent_constant)
+        kernel2 = kernel_constant * np.exp(-dist2 * exponent_constant)
 
         yhat2 = kernel2 @ alphas + intercept
 
         ydiff2 = yhat2 - y2
 
-        train_rmse = np.sqrt(np.mean(ydiff2 ** 2))
+        train_rmse = np.sqrt(np.mean(ydiff2**2))
         train_mae = np.mean(np.abs(ydiff2))
 
         self.train_rmses.append(train_rmse)
         self.train_maes.append(train_mae)
 
-        print('Train RMSE:', np.round(train_rmse, 3))
-        print('Train MAE:', np.round(train_mae, 3))
+        print("Train RMSE:", np.round(train_rmse, 3))
+        print("Train MAE:", np.round(train_mae, 3))
 
         if self.test_data != None:
             X_test = self.test_data[0]
             Xt_embedded = np.dot(X_test, A.T)
-            distt = pairwise_distances(Xt_embedded, X1e,
-                                       squared=True, n_jobs=-1)
-            kernel_test = kernel_constant * np.exp(
-                - distt * exponent_constant)
+            distt = pairwise_distances(Xt_embedded, X1e, squared=True, n_jobs=-1)
+            kernel_test = kernel_constant * np.exp(-distt * exponent_constant)
             # / (np.sqrt(2 * np.pi) * sigma)
 
             yhat_test = kernel_test @ alphas + intercept
@@ -266,35 +282,36 @@ class MLKRR:
             # ydiff_test = yhat_test - y_test
             ydiff_test = np.array(yhat_test - y_test)
 
-            test_rmse = np.sqrt(np.mean(ydiff_test ** 2))
+            test_rmse = np.sqrt(np.mean(ydiff_test**2))
             test_mae = np.mean(np.abs(ydiff_test))
 
             self.test_rmses.append(test_rmse)
             self.test_maes.append(test_mae)
 
-            print('Test RMSE:', np.round(test_rmse, 3))
-            print('Test MAE:', np.round(test_mae, 3))
+            print("Test RMSE:", np.round(test_rmse, 3))
+            print("Test MAE:", np.round(test_mae, 3))
 
         # print('Train RMSE:', np.round(np.sqrt(np.mean(ydiff ** 2)), 5))
-        print('========= shuffle: {},  iteration: {} =============='.format(
-            self.shuffle_n_, self.n_iter_))
+        print(
+            "========= shuffle: {},  iteration: {} ==============".format(
+                self.shuffle_n_, self.n_iter_
+            )
+        )
 
-        cost = (ydiff2 ** 2).sum()
+        cost = (ydiff2**2).sum()
 
         # also compute the gradient
         u = J.T @ kernel2.T @ ydiff2
         W = ydiff2[:, np.newaxis] * kernel2 * alphas
 
-        Q = np.diag(
-            np.sum(W, axis=1))
+        Q = np.diag(np.sum(W, axis=1))
 
-        R = np.diag(
-            np.sum(W, axis=0))
+        R = np.diag(np.sum(W, axis=0))
 
         t1 = X2.T @ (-W) @ X1
         t2 = X2.T @ Q @ X2
         t3 = X1.T @ R @ X1
-        cc = - 4 * A * exponent_constant @ (t1 + t1.T + t2 + t3)
+        cc = -4 * A * exponent_constant @ (t1 + t1.T + t2 + t3)
 
         S = kernel1 * u[:, np.newaxis] * v
         T = -S - S.T + np.diag(np.sum(S, axis=0) + np.sum(S, axis=1))
@@ -305,11 +322,12 @@ class MLKRR:
             grad_diag = np.diag(grad)
 
             if self.smoothness != 0:
-                grad += self.smoothness * 2 * np.diag(
-                    np.dot(np.diag(A), self.ttpmat))
+                grad += self.smoothness * 2 * np.diag(np.dot(np.diag(A), self.ttpmat))
 
-                extra = self.smoothness * np.linalg.norm(np.diag(
-                    np.dot(np.diag(A), self.tmat))) ** 2
+                extra = (
+                    self.smoothness
+                    * np.linalg.norm(np.diag(np.dot(np.diag(A), self.tmat))) ** 2
+                )
 
                 cost += extra
 
@@ -320,15 +338,19 @@ class MLKRR:
                 extra = self.smoothness * 2 * A @ self.ttpmat
                 grad += extra
 
-                cost += self.smoothness * \
-                    np.linalg.norm(np.dot(A, self.tmat)) ** 2
+                cost += self.smoothness * np.linalg.norm(np.dot(A, self.tmat)) ** 2
 
         if self.verbose:
             start_time = time.time() - start_time
-            values_fmt = '[{cls}] {n_iter:>10} {loss:>20.6e} {start_time:>10.2f}'
-            print(values_fmt.format(cls=self.__class__.__name__,
-                                    n_iter=self.n_iter_, loss=cost,
-                                    start_time=start_time))
+            values_fmt = "[{cls}] {n_iter:>10} {loss:>20.6e} {start_time:>10.2f}"
+            print(
+                values_fmt.format(
+                    cls=self.__class__.__name__,
+                    n_iter=self.n_iter_,
+                    loss=cost,
+                    start_time=start_time,
+                )
+            )
             sys.stdout.flush()
 
         self.n_iter_ += 1
@@ -336,11 +358,17 @@ class MLKRR:
 
 
 class MLKR:
-    """Metric Learning for Kernel Ridge Regression (MLKRR)
-    """
+    """Metric Learning for Kernel Ridge Regression (MLKRR)"""
 
-    def __init__(self, init='identity', tol=None, max_iter=100,
-                 verbose=False, method='L-BFGS-B', test_data=None):
+    def __init__(
+        self,
+        init="identity",
+        tol=None,
+        max_iter=100,
+        verbose=False,
+        method="L-BFGS-B",
+        test_data=None,
+    ):
 
         self.init = init
         self.tol = tol
@@ -361,7 +389,7 @@ class MLKR:
         n, d = X.shape
         cls_name = self.__class__.__name__
 
-        if self.init == 'identity':
+        if self.init == "identity":
             self.init = np.diag(np.ones(shape=[X.shape[1]]))
 
         self.A = self.init.copy()
@@ -377,9 +405,15 @@ class MLKR:
 
         self.n_iter_ = 0
 
-        res = minimize(self._loss, self.A.ravel(), (X, y), method=self.method,
-                       jac=True, tol=self.tol,
-                       options=dict(maxiter=self.max_iter))
+        res = minimize(
+            self._loss,
+            self.A.ravel(),
+            (X, y),
+            method=self.method,
+            jac=True,
+            tol=self.tol,
+            options=dict(maxiter=self.max_iter),
+        )
 
         self.components_ = res.x.reshape(self.A.shape)
         self.A = self.components_
@@ -391,24 +425,26 @@ class MLKR:
             if not res.success:
                 cls_name = self.__class__.__name__
                 warnings.warn(
-                    '[{}] MLKR did not converge: {}'.format(
-                        cls_name, res.message), ConvergenceWarning)
-            print('[{}] Training took {:8.2f}s.'.format(cls_name, train_time))
+                    "[{}] MLKR did not converge: {}".format(cls_name, res.message),
+                    ConvergenceWarning,
+                )
+            print("[{}] Training took {:8.2f}s.".format(cls_name, train_time))
 
         return self
 
     def _loss(self, flatA, X, y):
 
         if self.n_iter_ == 0 and self.verbose:
-            header_fields = ['Iteration', 'Objective Value', 'Time(s)']
-            header_fmt = '{:>10} {:>20} {:>10}'
+            header_fields = ["Iteration", "Objective Value", "Time(s)"]
+            header_fmt = "{:>10} {:>20} {:>10}"
             header = header_fmt.format(*header_fields)
             cls_name = self.__class__.__name__
-            print('[{cls}]'.format(cls=cls_name))
-            print('[{cls}] {header}\n[{cls}] {sep}'.format(
-                cls=cls_name,
-                header=header,
-                sep='-' * len(header)))
+            print("[{cls}]".format(cls=cls_name))
+            print(
+                "[{cls}] {header}\n[{cls}] {sep}".format(
+                    cls=cls_name, header=header, sep="-" * len(header)
+                )
+            )
 
         start_time = time.time()
 
@@ -418,35 +454,33 @@ class MLKR:
         X_embedded = np.dot(X, A.T)
         dist = pairwise_distances(X_embedded, squared=True, n_jobs=-1)
         np.fill_diagonal(dist, np.inf)
-        softmax = np.exp(- dist - logsumexp(- dist, axis=1)[:, np.newaxis])
+        softmax = np.exp(-dist - logsumexp(-dist, axis=1)[:, np.newaxis])
         yhat = softmax.dot(y)
         ydiff = yhat - y
-        cost = (ydiff ** 2).sum()
+        cost = (ydiff**2).sum()
 
-        train_rmse = np.sqrt(np.mean(ydiff ** 2))
+        train_rmse = np.sqrt(np.mean(ydiff**2))
         train_mae = np.mean(np.abs(ydiff))
 
         self.train_rmses.append(train_rmse)
         self.train_maes.append(train_mae)
 
-        print('Train RMSE:', np.round(train_rmse, 3))
-        print('Train MAE:', np.round(train_mae, 3))
+        print("Train RMSE:", np.round(train_rmse, 3))
+        print("Train MAE:", np.round(train_mae, 3))
 
         # also compute the gradient
 
         W = softmax * ydiff[:, np.newaxis] * (y - yhat[:, np.newaxis])
         W_sym = W + W.T
-        np.fill_diagonal(W_sym, - W.sum(axis=0))
+        np.fill_diagonal(W_sym, -W.sum(axis=0))
         grad = 4 * (X_embedded.T.dot(W_sym)).dot(X)
 
         if self.test_data is not None:
             X_test = self.test_data[0]
             Xt_embedded = np.dot(X_test, A.T)
-            distt = pairwise_distances(Xt_embedded, X_embedded,
-                                       squared=True, n_jobs=-1)
+            distt = pairwise_distances(Xt_embedded, X_embedded, squared=True, n_jobs=-1)
 
-            softmax = np.exp(
-                - distt - logsumexp(- distt, axis=1)[:, np.newaxis])
+            softmax = np.exp(-distt - logsumexp(-distt, axis=1)[:, np.newaxis])
             yhat_test = softmax.dot(y)
 
             y_test = self.test_data[1]
@@ -454,22 +488,27 @@ class MLKR:
             # ydiff_test = yhat_test - y_test
             ydiff_test = np.array(yhat_test - y_test)
 
-            test_rmse = np.sqrt(np.mean(ydiff_test ** 2))
+            test_rmse = np.sqrt(np.mean(ydiff_test**2))
             test_mae = np.mean(np.abs(ydiff_test))
 
             self.test_rmses.append(test_rmse)
             self.test_maes.append(test_mae)
 
-            print('Test RMSE:', np.round(test_rmse, 3))
-            print('Test MAE:', np.round(test_mae, 3))
+            print("Test RMSE:", np.round(test_rmse, 3))
+            print("Test MAE:", np.round(test_mae, 3))
 
         if self.verbose:
             start_time = time.time() - start_time
-            values_fmt = '[{cls}] {n_iter:>10} {loss:>20.6e} {start_time:>10.2f}'
-            print(values_fmt.format(cls=self.__class__.__name__,
-                                    n_iter=self.n_iter_, loss=cost,
-                                    start_time=start_time))
+            values_fmt = "[{cls}] {n_iter:>10} {loss:>20.6e} {start_time:>10.2f}"
+            print(
+                values_fmt.format(
+                    cls=self.__class__.__name__,
+                    n_iter=self.n_iter_,
+                    loss=cost,
+                    start_time=start_time,
+                )
+            )
             sys.stdout.flush()
-        print('===================================================')
+        print("===================================================")
         self.n_iter_ += 1
         return cost, grad.ravel()
