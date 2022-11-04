@@ -7,10 +7,16 @@ import warnings
 
 import numpy as np
 import sklearn as sk
+import sklearn.model_selection
 from scipy.optimize import minimize
 from scipy.special import logsumexp
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.metrics import pairwise_distances
+from sklearn.metrics import pairwise_kernels
+
+from scipy.linalg import lu_factor, lu_solve
+
+import pandas as pd
 
 EPS = np.finfo(float).eps
 
@@ -37,19 +43,16 @@ class MLKRR:
     verbose : bool, optional (default=False)
       Whether to print progress messages or not.
 
-    diag : bool, optional (default=False)
-      Allows to force the matrix A to be diagonal.
-
-    smothness : float, optional (default=0)
-      Induces a constraint to enforce smoothness in the matrix A.
-
-    krr_regularization : float, optional (default=0)
+    krr_regularization : float, optional (default=1e-9)
       Regularization on the estimator of KRR.
 
     sigma : float, optional (default=1)
       Parameter of the gaussian kernel, determines its (initial) width.
 
-    metod : string, optional (default='L-BFGS-B')
+    learn_sigma : bool, optional (default=False)
+      Learn sigma before every shuffle if True. Sigma is fixed otherwise.
+
+    method : string, optional (default='L-BFGS-B')
       Optimization method used to minimize the loss function.
 
     test_data: [X, y], optional (default=None)
@@ -69,19 +72,22 @@ class MLKRR:
     max_iter_per_shuffle : `int`
       The number of iterations the solver has run for each shuffling of the data.
 
-    components_ : `numpy.ndarray`, shape=(n_components, n_features)
+    A : `numpy.ndarray`, shape=(n_components, n_features)
       The learned linear transformation ``A``.
 
-    train_rmse : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
+    sigma : 'float'
+      Learned variance.
+
+    train_rmses : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
       Evolution of the root mean squared error of the KRR on the train set.
 
-    test_rmse : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
+    test_rmses : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
       Evolution of the root mean squared error of the KRR on the test set.
 
-    train_mae : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
+    train_maes : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
       Evolution of the mean absolute error of the KRR on the train set.
 
-    test_mae : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
+    test_maes : `list`, shape=(max_iter_per_shuffle * shuffle_iterations)
       Evolution of the mean absolute error of the KRR on the test set.
 
     Examples
@@ -107,10 +113,9 @@ class MLKRR:
         tol=None,
         max_iter_per_shuffle=100,
         verbose=False,
-        diag=False,
-        smoothness=0,
-        krr_regularization=0,
-        sigma=1,
+        krr_regularization=1e-9,
+        sigma=1.0,
+        learn_sigma=False,
         method="L-BFGS-B",
         test_data=None,
         size_alpha=0.5,
@@ -118,15 +123,14 @@ class MLKRR:
         shuffle_iterations=1,
     ):
 
-        self.smoothness = smoothness
         self.test_data = test_data
-        self.diag = diag
         self.init = init
         self.tol = tol
         self.max_iter_per_shuffle = max_iter_per_shuffle
         self.verbose = verbose
         self.krr_regularization = krr_regularization
         self.sigma = sigma
+        self.learn_sigma=learn_sigma
         self.method = method
         self.size_alpha = size_alpha
         self.size_A = size_A
@@ -142,14 +146,11 @@ class MLKRR:
         y : (n) data labels
         """
         n, d = X.shape
-
-        if self.smoothness != 0:
-            self.tmat = np.diag(np.ones(d), k=0) - np.diag(np.ones(d - 1), k=-1)
-            self.tmat = self.tmat[:, :-1]
-            self.ttpmat = self.tmat @ self.tmat.T
+        self.Ashape=d
+        assert n==len(y), "The number of samples do not match that of labels."
 
         if self.init == "identity":
-            self.init = np.diag(np.ones(shape=[X.shape[1]]))
+            self.init = np.eye(self.Ashape)
 
         self.A = self.init.copy()
 
@@ -163,66 +164,178 @@ class MLKRR:
 
         self.test_rmses = []
         self.test_maes = []
-
+        
         for i in range(self.shuffle_iterations):
             self.shuffle_n_ = i
-
             self.shuffle_index = i
+
+            self.indices_X1, self.indices_X2 = sk.model_selection.train_test_split(
+                np.arange(len(X)),
+                train_size=self.size_alpha,
+                test_size=self.size_A,
+                random_state=self.shuffle_index,
+            )
+
             print("====================================")
-            print("Starting shuffle iteration: ", i)
+            print("Starting shuffle iteration: ", i+1)
             print("====================================")
+            if self.verbose:
+                header_fields = ["Iteration", "Objective Value", "Time(s)"]
+                header_fmt = "{:>10} {:>20} {:>10}"
+                header = header_fmt.format(*header_fields)
+                cls_name = self.__class__.__name__
+                print("[{cls}]".format(cls=cls_name))
+                print(
+                    "[{cls}] {header}\n[{cls}] {sep}".format(
+                        cls=cls_name, header=header, sep="-" * len(header)
+                    )
+                )
+
+            if self.learn_sigma:
+                print("Optimizing for sigma. Current sigma:", self.sigma)
+                t=time.time()
+                res = minimize(
+                    self.simpleloss,
+                    self.sigma,
+                    (self.A, X, y),
+                    method=self.method,
+                    jac=True,
+                    options=dict(maxiter=self.max_iter_per_shuffle),
+                    bounds=[(1.0,None)],
+                )
+                self.sigma=res.x[0]
+                print("New sigma:", self.sigma, "(took", time.time()-t, "s)")
+            
             res = minimize(
                 self._loss,
                 self.A.ravel(),
                 (X, y),
                 method=self.method,
-                jac=True,
                 tol=self.tol,
+                jac=True,
                 options=dict(maxiter=self.max_iter_per_shuffle),
+                callback=self.callback
             )
-
-            self.components_ = res.x.reshape(self.A.shape)
-            self.A = self.components_
-
+            self.A = res.x.reshape(self.A.shape)
+        
         # Stop timer
         train_time = time.time() - train_time
         if self.verbose:
-            # Warn the user if the algorithm did not converge
-            if not res.success:
-                cls_name = self.__class__.__name__
-                warnings.warn(
-                    "[{}] MLKR did not converge: {}".format(cls_name, res.message),
-                    ConvergenceWarning,
-                )
+            cls_name = self.__class__.__name__
             print("[{}] Training took {:8.2f}s.".format(cls_name, train_time))
 
         return self
 
-    def _loss(self, flatA, X, y):
-
-        if self.n_iter_ == 0 and self.verbose:
-            header_fields = ["Iteration", "Objective Value", "Time(s)"]
-            header_fmt = "{:>10} {:>20} {:>10}"
-            header = header_fmt.format(*header_fields)
-            cls_name = self.__class__.__name__
-            print("[{cls}]".format(cls=cls_name))
-            print(
-                "[{cls}] {header}\n[{cls}] {sep}".format(
-                    cls=cls_name, header=header, sep="-" * len(header)
-                )
+    def _loss(self, parms, X, y):
+        print(
+            "========= shuffle: {},  iteration: {} ==============".format(
+                self.shuffle_n_+1, self.n_iter_+1
             )
-
+        )
+        sigma=self.sigma
+        reg=self.krr_regularization
+        flatA=parms
         start_time = time.time()
 
-        A = flatA.reshape((-1, X.shape[1]))
-        self.A = A
+        A = flatA.reshape((-1, self.Ashape))
+        indices_X1, indices_X2 = self.indices_X1, self.indices_X2
+        X1 = X[indices_X1]
+        X2 = X[indices_X2]
 
-        indices_X1, indices_X2 = sk.model_selection.train_test_split(
-            np.arange(len(X)),
-            train_size=self.size_alpha,
-            test_size=self.size_A,
-            random_state=self.shuffle_index,
-        )
+        y1 = y[indices_X1]
+        y2 = y[indices_X2]
+
+        Xe = X@A.T
+        X1e = Xe[indices_X1]
+        X2e = Xe[indices_X2]
+        n1 = len(X1)
+
+        kernel_constant = 1 / (1 * np.sqrt(2 * np.pi) * sigma)
+        exponent_constant = 1 / (1 * sigma**2)
+        
+        n_jobs=-1
+        kernel1=pairwise_kernels(X1e, metric='rbf', gamma=exponent_constant, n_jobs=n_jobs)*kernel_constant 
+        kernel2=pairwise_kernels(X2e, X1e, metric='rbf', gamma=exponent_constant, n_jobs=n_jobs)*kernel_constant 
+
+        # LU decomposition of H used everytime H^-1 @ b or H^-T @ b is computed
+        H=kernel1+reg*np.eye(n1)
+        lu, pivot = lu_factor(H, check_finite=False)
+        alphas=lu_solve((lu,pivot), y1, check_finite=False)
+
+        intercept = 0
+
+        yhat2 = kernel2 @ alphas + intercept
+        ydiff2 = yhat2 - y2
+        cost = (ydiff2**2).sum()
+
+        ############## TESTS #############
+
+        self.train_rmse = np.sqrt(np.mean(ydiff2**2))
+        self.train_mae = np.mean(np.abs(ydiff2))
+
+        if self.test_data != None:
+            X_test = self.test_data[0]
+            Xt_embedded = np.dot(X_test, A.T)
+
+            kernel_test=pairwise_kernels(Xt_embedded, X1e, metric='rbf', gamma=exponent_constant, n_jobs=n_jobs)*kernel_constant
+
+            yhat_test = kernel_test @ alphas
+
+            y_test = self.test_data[1]
+            
+            ydiff_test = np.array(yhat_test - y_test)
+
+            self.test_rmse = np.sqrt(np.mean(ydiff_test**2))
+            self.test_mae = np.mean(np.abs(ydiff_test))
+
+        ################# GRADIENTS #################
+        # matrix gradient
+        u=lu_solve((lu,pivot), kernel2.T@ydiff2, trans=1, check_finite=False)
+        W = ydiff2[:, np.newaxis] * kernel2 * alphas
+        Q = np.diag(np.sum(W, axis=1))
+        R = np.diag(np.sum(W, axis=0))
+        S = kernel1 * u[:, np.newaxis] * alphas
+        T = -S - S.T + np.diag(np.sum(S, axis=0) + np.sum(S, axis=1))
+        s1=X2.T@(-W)@X1
+        s2=X2e.T@Q@X2
+        s3=X1e.T@(R-T)@X1
+        gradA = -4*exponent_constant*(A@(s1+s1.T) +  s2+s3)
+        
+        ################## VERBOSE ###################
+        if self.verbose:
+            start_time = time.time() - start_time
+            values_fmt = "[{cls}] {n_iter:>10} {loss:>20.6e} {start_time:>10.2f}"
+            print(
+                values_fmt.format(
+                    cls=self.__class__.__name__,
+                    n_iter=self.n_iter_+1,
+                    loss=cost,
+                    start_time=start_time,
+                )
+            )
+            sys.stdout.flush()
+        
+        return cost, gradA.ravel()
+   
+    def callback(self,parms):
+
+        self.train_rmses.append(self.train_rmse)
+        self.train_maes.append(self.train_mae)
+        if self.verbose:
+            print("Train RMSE:", np.round(self.train_rmse, 5))
+            print("Train MAE:", np.round(self.train_mae, 5))
+        self.test_rmses.append(self.test_rmse)
+        self.test_maes.append(self.test_mae)
+
+        if self.verbose:
+            print("Test RMSE:", np.round(self.test_rmse, 5))
+            print("Test MAE:", np.round(self.test_mae, 5))
+        
+        self.n_iter_ += 1
+    
+    # used for sigma optimization
+    def simpleloss(self,sigma,A, X,y):
+        indices_X1, indices_X2 = self.indices_X1, self.indices_X2
 
         X1 = X[indices_X1]
         X2 = X[indices_X2]
@@ -234,7 +347,6 @@ class MLKRR:
         X1e = Xe[indices_X1]
         X2e = Xe[indices_X2]
 
-        sigma = self.sigma
         kernel_constant = 1 / (1 * np.sqrt(2 * np.pi) * sigma)
         exponent_constant = 1 / (1 * sigma**2)
 
@@ -243,14 +355,12 @@ class MLKRR:
         kernel1 = kernel_constant * np.exp(-dist1 * exponent_constant)
 
         n1 = len(X1)
-        J = np.linalg.inv(kernel1 + self.krr_regularization * np.eye(n1))
-        v = J @ y1
-        alphas = v
+        reg=self.krr_regularization
+        H=kernel1+reg*np.eye(n1)
+        lu, pivot = lu_factor(H, check_finite=False)
+        alphas=lu_solve((lu,pivot), y1, check_finite=False)
 
-        intercept = 0
-
-        # yhat = kernel1.dot(alphas) + intercept
-
+        intercept=0
         dist2 = pairwise_distances(X2e, X1e, squared=True, n_jobs=-1)
 
         kernel2 = kernel_constant * np.exp(-dist2 * exponent_constant)
@@ -258,257 +368,8 @@ class MLKRR:
         yhat2 = kernel2 @ alphas + intercept
 
         ydiff2 = yhat2 - y2
-
-        train_rmse = np.sqrt(np.mean(ydiff2**2))
-        train_mae = np.mean(np.abs(ydiff2))
-
-        self.train_rmses.append(train_rmse)
-        self.train_maes.append(train_mae)
-
-        print("Train RMSE:", np.round(train_rmse, 3))
-        print("Train MAE:", np.round(train_mae, 3))
-
-        if self.test_data != None:
-            X_test = self.test_data[0]
-            Xt_embedded = np.dot(X_test, A.T)
-            distt = pairwise_distances(Xt_embedded, X1e, squared=True, n_jobs=-1)
-            kernel_test = kernel_constant * np.exp(-distt * exponent_constant)
-            # / (np.sqrt(2 * np.pi) * sigma)
-
-            yhat_test = kernel_test @ alphas + intercept
-
-            y_test = self.test_data[1]
-
-            # ydiff_test = yhat_test - y_test
-            ydiff_test = np.array(yhat_test - y_test)
-
-            test_rmse = np.sqrt(np.mean(ydiff_test**2))
-            test_mae = np.mean(np.abs(ydiff_test))
-
-            self.test_rmses.append(test_rmse)
-            self.test_maes.append(test_mae)
-
-            print("Test RMSE:", np.round(test_rmse, 3))
-            print("Test MAE:", np.round(test_mae, 3))
-
-        # print('Train RMSE:', np.round(np.sqrt(np.mean(ydiff ** 2)), 5))
-        print(
-            "========= shuffle: {},  iteration: {} ==============".format(
-                self.shuffle_n_, self.n_iter_
-            )
-        )
-
         cost = (ydiff2**2).sum()
-
-        # also compute the gradient
-        u = J.T @ kernel2.T @ ydiff2
-        W = ydiff2[:, np.newaxis] * kernel2 * alphas
-
-        Q = np.diag(np.sum(W, axis=1))
-
-        R = np.diag(np.sum(W, axis=0))
-
-        t1 = X2.T @ (-W) @ X1
-        t2 = X2.T @ Q @ X2
-        t3 = X1.T @ R @ X1
-        cc = -4 * A * exponent_constant @ (t1 + t1.T + t2 + t3)
-
-        S = kernel1 * u[:, np.newaxis] * v
-        T = -S - S.T + np.diag(np.sum(S, axis=0) + np.sum(S, axis=1))
-
-        grad = cc + 4 * exponent_constant * A @ X1.T @ T @ X1
-
-        if self.diag is True:
-            grad_diag = np.diag(grad)
-
-            if self.smoothness != 0:
-                grad += self.smoothness * 2 * np.diag(np.dot(np.diag(A), self.ttpmat))
-
-                extra = (
-                    self.smoothness
-                    * np.linalg.norm(np.diag(np.dot(np.diag(A), self.tmat))) ** 2
-                )
-
-                cost += extra
-
-            grad = np.diag(grad_diag)
-
-        else:
-            if self.smoothness != 0:
-                extra = self.smoothness * 2 * A @ self.ttpmat
-                grad += extra
-
-                cost += self.smoothness * np.linalg.norm(np.dot(A, self.tmat)) ** 2
-
-        if self.verbose:
-            start_time = time.time() - start_time
-            values_fmt = "[{cls}] {n_iter:>10} {loss:>20.6e} {start_time:>10.2f}"
-            print(
-                values_fmt.format(
-                    cls=self.__class__.__name__,
-                    n_iter=self.n_iter_,
-                    loss=cost,
-                    start_time=start_time,
-                )
-            )
-            sys.stdout.flush()
-
-        self.n_iter_ += 1
-        return cost, grad.ravel()
-
-
-class MLKR:
-    """Metric Learning for Kernel Ridge Regression (MLKRR)"""
-
-    def __init__(
-        self,
-        init="identity",
-        tol=None,
-        max_iter=100,
-        verbose=False,
-        method="L-BFGS-B",
-        test_data=None,
-    ):
-
-        self.init = init
-        self.tol = tol
-        self.test_data = test_data
-        self.max_iter = max_iter
-        self.verbose = verbose
-        self.method = method
-
-    def fit(self, X, y):
-        """
-        Fit MLKR model
-
-        Parameters
-        ----------
-        X : (n x d) array of samples
-        y : (n) data labels
-        """
-        n, d = X.shape
-        cls_name = self.__class__.__name__
-
-        if self.init == "identity":
-            self.init = np.diag(np.ones(shape=[X.shape[1]]))
-
-        self.A = self.init.copy()
-
-        # Measure the total training time
-        train_time = time.time()
-
-        self.train_rmses = []
-        self.train_maes = []
-
-        self.test_rmses = []
-        self.test_maes = []
-
-        self.n_iter_ = 0
-
-        res = minimize(
-            self._loss,
-            self.A.ravel(),
-            (X, y),
-            method=self.method,
-            jac=True,
-            tol=self.tol,
-            options=dict(maxiter=self.max_iter),
-        )
-
-        self.components_ = res.x.reshape(self.A.shape)
-        self.A = self.components_
-
-        # Stop timer
-        train_time = time.time() - train_time
-        if self.verbose:
-            # Warn the user if the algorithm did not converge
-            if not res.success:
-                cls_name = self.__class__.__name__
-                warnings.warn(
-                    "[{}] MLKR did not converge: {}".format(cls_name, res.message),
-                    ConvergenceWarning,
-                )
-            print("[{}] Training took {:8.2f}s.".format(cls_name, train_time))
-
-        return self
-
-    def _loss(self, flatA, X, y):
-
-        if self.n_iter_ == 0 and self.verbose:
-            header_fields = ["Iteration", "Objective Value", "Time(s)"]
-            header_fmt = "{:>10} {:>20} {:>10}"
-            header = header_fmt.format(*header_fields)
-            cls_name = self.__class__.__name__
-            print("[{cls}]".format(cls=cls_name))
-            print(
-                "[{cls}] {header}\n[{cls}] {sep}".format(
-                    cls=cls_name, header=header, sep="-" * len(header)
-                )
-            )
-
-        start_time = time.time()
-
-        A = flatA.reshape((-1, X.shape[1]))
-        self.A = A
-
-        X_embedded = np.dot(X, A.T)
-        dist = pairwise_distances(X_embedded, squared=True, n_jobs=-1)
-        np.fill_diagonal(dist, np.inf)
-        softmax = np.exp(-dist - logsumexp(-dist, axis=1)[:, np.newaxis])
-        yhat = softmax.dot(y)
-        ydiff = yhat - y
-        cost = (ydiff**2).sum()
-
-        train_rmse = np.sqrt(np.mean(ydiff**2))
-        train_mae = np.mean(np.abs(ydiff))
-
-        self.train_rmses.append(train_rmse)
-        self.train_maes.append(train_mae)
-
-        print("Train RMSE:", np.round(train_rmse, 3))
-        print("Train MAE:", np.round(train_mae, 3))
-
-        # also compute the gradient
-
-        W = softmax * ydiff[:, np.newaxis] * (y - yhat[:, np.newaxis])
-        W_sym = W + W.T
-        np.fill_diagonal(W_sym, -W.sum(axis=0))
-        grad = 4 * (X_embedded.T.dot(W_sym)).dot(X)
-
-        if self.test_data is not None:
-            X_test = self.test_data[0]
-            Xt_embedded = np.dot(X_test, A.T)
-            distt = pairwise_distances(Xt_embedded, X_embedded, squared=True, n_jobs=-1)
-
-            softmax = np.exp(-distt - logsumexp(-distt, axis=1)[:, np.newaxis])
-            yhat_test = softmax.dot(y)
-
-            y_test = self.test_data[1]
-
-            # ydiff_test = yhat_test - y_test
-            ydiff_test = np.array(yhat_test - y_test)
-
-            test_rmse = np.sqrt(np.mean(ydiff_test**2))
-            test_mae = np.mean(np.abs(ydiff_test))
-
-            self.test_rmses.append(test_rmse)
-            self.test_maes.append(test_mae)
-
-            print("Test RMSE:", np.round(test_rmse, 3))
-            print("Test MAE:", np.round(test_mae, 3))
-
-        if self.verbose:
-            start_time = time.time() - start_time
-            values_fmt = "[{cls}] {n_iter:>10} {loss:>20.6e} {start_time:>10.2f}"
-            print(
-                values_fmt.format(
-                    cls=self.__class__.__name__,
-                    n_iter=self.n_iter_,
-                    loss=cost,
-                    start_time=start_time,
-                )
-            )
-            sys.stdout.flush()
-        print("===================================================")
-        self.n_iter_ += 1
-        return cost, grad.ravel()
+        v=(-kernel2/sigma + 2/sigma**3 * kernel2*dist2)@alphas
+        w=(kernel1/sigma - 2/sigma**3 * kernel1*dist1)@alphas
+        grads=2*ydiff2@(v+kernel2@lu_solve((lu,pivot),w))
+        return cost, grads   
