@@ -7,7 +7,11 @@ Dependencies are minimal:
 - `scipy`
 - `scikit-learn`
 
-An example of how to run the algorithm is provided for the QM9 dataset. To generate the necessary data, first run
+## Examples
+An example of how to run the algorithm is provided for the QM9 dataset. The example has an additional dependency:
+- `pip install git+https://github.com/qmlcode/qml@develop`
+
+To generate the necessary data, first run
 `data/generate_reps.py`. 
 Then the corresponding representations will be generated in the `data` directory, needed for the `examples/qm9.py` to run.
 
