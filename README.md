@@ -2,7 +2,7 @@
 
 This repository contains the a python module with the code to execute the MLKRR algorithm. The provided `MLKRR` class has a similar API to standard `scikit-learn` regressors and uses a fit method.
 
-Install the required dependencies from .
+Install the required dependencies as `pip install requirements.txt`.
 
 First, the original representations (to be transformed by the MLKRR algorithm) need to be loaded:
 1. Run `src/generate_data.py` to save the representations to the `data/` dir.
