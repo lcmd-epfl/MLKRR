@@ -1,8 +1,8 @@
 # Applies MLKRR on a random subset of size 10 000 of fragments of qm9, to learn their energies. 
 # The initial set is split into 10 000 fragments for the learning, and 2 000 for test.
 
-# The data points are FCHL representations (vectors of dimension 720), and the labels are the associated energies (u0)
-# The FCHL data fchls_glob_qm9.npy is available at [??]
+# The data points are FCHL representations (vectors of dimension 720), and the labels are the associated energies (u0) in Ha
+# The FCHL data fchls_glob_qm9.npy is in the data dir after running generate_qm9_reps.py 
 
 # At each iteration of the minimization algorithm (possibly multiple steps before making progess),
 # the predictions are compared with the labels, appending test_maes, test_rmses, and train_maes, train_rmses.
@@ -20,9 +20,10 @@ import sys
 sys.path.insert(0,'..')
 import mlkrr
 
-X=np.load("../data/fchls_glob_qm9.npy", allow_pickle=True)
+X=np.load("data/fchls_glob_qm9.npy", allow_pickle=True)
 m, n=X.shape
-y=np.load("../data/u0.npy", allow_pickle=True)
+data=pd.read_csv("data/data_red.csv")
+data=data['u0'].to_numpy() # in Ha 
 
 # takes 12000 random indices, and 2000 random indices among them for data and test
 S=12000
@@ -48,7 +49,7 @@ M = mlkrr.MLKRR(
         )
 # run optimization and save object
 M.fit(X[ind_data], y[ind_data])
-np.save("MLKRR.npy",M)
+np.save("examples/MLKRR.npy",M)
 
 # plot mean average errors for train and test data 
 train_maes=M.train_maes
