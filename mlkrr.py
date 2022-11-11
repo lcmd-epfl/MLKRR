@@ -10,7 +10,6 @@ import sklearn as sk
 import sklearn.model_selection
 from scipy.optimize import minimize
 from scipy.special import logsumexp
-from sklearn.exceptions import ConvergenceWarning
 from sklearn.metrics import pairwise_distances
 from sklearn.metrics import pairwise_kernels
 
@@ -204,7 +203,7 @@ class MLKRR:
                     bounds=[(1.0,None)],
                 )
                 self.sigma=res.x[0]
-                print("New sigma:", self.sigma, "(took", time.time()-t, "s)")
+                print("New sigma:", self.sigma, "(took", np.round(time.time()-t,2), "s)")
             
             res = minimize(
                 self._loss,

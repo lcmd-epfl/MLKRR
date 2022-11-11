@@ -20,9 +20,9 @@ import sys
 sys.path.insert(0,'..')
 import mlkrr
 
-X=np.load("data/fchls_glob_qm9.npy", allow_pickle=True)
+X=np.load("../data/fchls_glob_qm9.npy", allow_pickle=True)
 m, n=X.shape
-data=pd.read_csv("data/data_red.csv")
+data=pd.read_csv("../data/data_red.csv")
 data=data['u0'].to_numpy() # in Ha 
 
 # takes 12000 random indices, and 2000 random indices among them for data and test
@@ -42,14 +42,14 @@ M = mlkrr.MLKRR(
         verbose=True,
         shuffle_iterations=2,
         max_iter_per_shuffle=10, 
-        test_data=[X[ind_test],y[ind_test]],
+        test_data=[X[ind_test],data[ind_test]],
         sigma=55.0,
         learn_sigma=True,
         krr_regularization=1e-9
         )
 # run optimization and save object
-M.fit(X[ind_data], y[ind_data])
-np.save("examples/MLKRR.npy",M)
+M.fit(X[ind_data], data[ind_data])
+np.save("../examples/MLKRR.npy",M)
 
 # plot mean average errors for train and test data 
 train_maes=M.train_maes
@@ -57,4 +57,3 @@ test_maes=M.test_maes
 plt.plot(train_maes)
 plt.plot(test_maes)
 plt.show()
-
