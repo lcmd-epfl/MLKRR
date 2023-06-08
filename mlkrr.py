@@ -120,6 +120,7 @@ class MLKRR:
         size_alpha=0.5,
         size_A=0.5,
         shuffle_iterations=1,
+        diag=False
     ):
 
         self.test_data = test_data
@@ -134,6 +135,7 @@ class MLKRR:
         self.size_alpha = size_alpha
         self.size_A = size_A
         self.shuffle_iterations = shuffle_iterations
+        self.diag = diag
 
     def fit(self, X, y):
         """
@@ -158,11 +160,12 @@ class MLKRR:
 
         self.n_iter_ = 0
 
-        self.train_rmses = []
-        self.train_maes = []
+        if self.test_data != None:
+            self.train_rmses = []
+            self.train_maes = []
 
-        self.test_rmses = []
-        self.test_maes = []
+            self.test_rmses = []
+            self.test_maes = []
         
         for i in range(self.shuffle_iterations):
             self.shuffle_n_ = i
@@ -299,7 +302,10 @@ class MLKRR:
         s2=X2e.T@Q@X2
         s3=X1e.T@(R-T)@X1
         gradA = -4*exponent_constant*(A@(s1+s1.T) +  s2+s3)
-        
+       
+        if self.diag==True:
+            gradA=np.diag(np.diag(gradA))
+
         ################## VERBOSE ###################
         if self.verbose:
             start_time = time.time() - start_time
@@ -318,16 +324,17 @@ class MLKRR:
    
     def callback(self,parms):
 
-        self.train_rmses.append(self.train_rmse)
-        self.train_maes.append(self.train_mae)
-        if self.verbose:
-            print("Train RMSE:", np.round(self.train_rmse, 5))
-            print("Train MAE:", np.round(self.train_mae, 5))
-        self.test_rmses.append(self.test_rmse)
-        self.test_maes.append(self.test_mae)
+        if self.test_data != None:
+            self.train_rmses.append(self.train_rmse)
+            self.train_maes.append(self.train_mae)
+            if self.verbose:
+                print("Train RMSE:", np.round(self.train_rmse, 5))
+                print("Train MAE:", np.round(self.train_mae, 5))
+            self.test_rmses.append(self.test_rmse)
+            self.test_maes.append(self.test_mae)
 
-        if self.verbose:
-            print("Test RMSE:", np.round(self.test_rmse, 5))
+            if self.verbose:
+                print("Test RMSE:", np.round(self.test_rmse, 5))
             print("Test MAE:", np.round(self.test_mae, 5))
         
         self.n_iter_ += 1
