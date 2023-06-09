@@ -178,10 +178,10 @@ class MLKRR:
                 random_state=self.shuffle_index,
             )
 
-            print("====================================")
-            print("Starting shuffle iteration: ", i+1)
-            print("====================================")
             if self.verbose:
+                print("====================================")
+                print("Starting shuffle iteration: ", i+1)
+                print("====================================")
                 header_fields = ["Iteration", "Objective Value", "Time(s)"]
                 header_fmt = "{:>10} {:>20} {:>10}"
                 header = header_fmt.format(*header_fields)
@@ -229,11 +229,12 @@ class MLKRR:
         return self
 
     def _loss(self, parms, X, y):
-        print(
-            "========= shuffle: {},  iteration: {} ==============".format(
-                self.shuffle_n_+1, self.n_iter_+1
+        if self.verbose:
+            print(
+                "========= shuffle: {},  iteration: {} ==============".format(
+                    self.shuffle_n_+1, self.n_iter_+1
+                )
             )
-        )
         sigma=self.sigma
         reg=self.krr_regularization
         flatA=parms
