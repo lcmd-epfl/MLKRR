@@ -150,10 +150,12 @@ class MLKRR:
         self.Ashape=d
         assert n==len(y), "The number of samples do not match that of labels."
 
-        if self.init == "identity":
+        if type(self.init)==type('') and self.init == "identity":
             self.init = np.eye(self.Ashape)
 
         self.A = self.init.copy()
+        
+        assert len(self.A)==d, "Initial matrix of wrong dimension."
 
         # Measure the total training time
         train_time = time.time()
